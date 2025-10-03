@@ -32,6 +32,7 @@ async def bot_help(ctx):
     embed.add_field(name="!vt topstreamers", value="Show top 5 streamers", inline=False)
     embed.add_field(name="!vt topvoice", value="Show top 5 voice channel users", inline=False)
     embed.add_field(name="!vt mystats", value="Show your personal statistics", inline=False)
+    embed.add_field(name="!vt debug", value="Debug database information", inline=False)
     embed.add_field(name="!vt bot_help", value="Show this help message", inline=False)
     
     await ctx.send(embed=embed)
@@ -166,6 +167,47 @@ async def mystats(ctx):
     
     await ctx.send(embed=embed)
 
+@commands.command()
+async def debug(ctx):
+    """Debug command to check database and tracking"""
+    print(f"🔧 Debug command triggered by {ctx.author}")
+    user_id = ctx.author.id
+    
+    # Check database contents
+    top_voice = ctx.bot.database.get_top_voice_users(10)
+    top_stream = ctx.bot.database.get_top_streamers(10)
+    
+    # Check if user exists in database
+    user_in_voice = any(user['user_id'] == user_id for user in top_voice)
+    user_in_stream = any(user['user_id'] == user_id for user in top_stream)
+    
+    # Get user's specific data if exists
+    user_voice_data = next((user for user in top_voice if user['user_id'] == user_id), None)
+    user_stream_data = next((user for user in top_stream if user['user_id'] == user_id), None)
+    
+    debug_info = f"**Debug Information for {ctx.author.display_name}**\n"
+    debug_info += f"**Your User ID:** {user_id}\n"
+    debug_info += f"**Total Voice Users in DB:** {len(top_voice)}\n"
+    debug_info += f"**Total Streamers in DB:** {len(top_stream)}\n"
+    debug_info += f"**You in Voice Data:** {user_in_voice}\n"
+    debug_info += f"**You in Stream Data:** {user_in_stream}\n"
+    
+    if user_voice_data:
+        debug_info += f"**Your Voice Time:** {user_voice_data['total_voice_time']} seconds\n"
+        debug_info += f"**Your Voice Sessions:** {user_voice_data['sessions']}\n"
+    
+    if user_stream_data:
+        debug_info += f"**Your Stream Time:** {user_stream_data['total_stream_time']} seconds\n"
+        debug_info += f"**Your Stream Sessions:** {user_stream_data['sessions']}\n"
+    
+    # Add database file info
+    debug_info += f"\n**Database Status:** Active\n"
+    debug_info += f"**Bot Online:** ✅ Connected to Discord\n"
+    
+    print(f"🔍 Debug info: {debug_info}")
+    
+    await ctx.send(f"```{debug_info}```")
+
 # Initialize and run bot
 if __name__ == "__main__":
     bot = VoiceTrackerBot()
@@ -199,6 +241,7 @@ if __name__ == "__main__":
     bot.add_command(topstreamers)
     bot.add_command(topvoice)
     bot.add_command(mystats)
+    bot.add_command(debug)  # Add the debug command
     
     print("🚀 Starting Discord Voice & Stream Tracker...")
     print("🔧 Debug mode enabled")
