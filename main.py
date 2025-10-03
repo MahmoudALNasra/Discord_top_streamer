@@ -21,14 +21,14 @@ class VoiceTrackerBot(commands.Bot):
     async def on_ready(self):
         print(f'✅ {self.user} has connected to Discord!')
         print(f'📊 Voice Tracker is monitoring {len(self.guilds)} server(s)')
-        print(f'🤖 Use !vt help for commands')
+        print(f'🤖 Use !vt bot_help for commands')
     
     async def on_voice_state_update(self, member, before, after):
         await self.tracker.handle_voice_state_update(member, before, after)
 
 # Bot Commands
 @commands.command()
-async def help(ctx):
+async def bot_help(ctx):
     """Show available commands"""
     embed = discord.Embed(
         title="🎧 Voice & Stream Tracker Help",
@@ -38,7 +38,7 @@ async def help(ctx):
     embed.add_field(name="!vt topstreamers", value="Show top 5 streamers", inline=False)
     embed.add_field(name="!vt topvoice", value="Show top 5 voice channel users", inline=False)
     embed.add_field(name="!vt mystats", value="Show your personal statistics", inline=False)
-    embed.add_field(name="!vt help", value="Show this help message", inline=False)
+    embed.add_field(name="!vt bot_help", value="Show this help message", inline=False)
     
     await ctx.send(embed=embed)
 
@@ -174,7 +174,7 @@ if __name__ == "__main__":
     bot = VoiceTrackerBot()
     
     # Add commands
-    bot.add_command(help)
+    bot.add_command(bot_help)  # Changed from 'help' to 'bot_help'
     bot.add_command(topstreamers)
     bot.add_command(topvoice)
     bot.add_command(mystats)
