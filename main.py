@@ -11,25 +11,19 @@ class VoiceTrackerBot(commands.Bot):
         intents.voice_states = True
         intents.messages = True
         intents.guilds = True
+        intents.message_content = True  # Explicitly enable message content
         
         super().__init__(command_prefix='!vt ', intents=intents)
         
         # Initialize components
         self.database = VoiceTrackerDatabase(config.DATABASE_PATH)
         self.tracker = VoiceTimeTracker(self.database)
-    
-    async def on_ready(self):
-        print(f'✅ {self.user} has connected to Discord!')
-        print(f'📊 Voice Tracker is monitoring {len(self.guilds)} server(s)')
-        print(f'🤖 Use !vt bot_help for commands')
-    
-    async def on_voice_state_update(self, member, before, after):
-        await self.tracker.handle_voice_state_update(member, before, after)
 
 # Bot Commands
 @commands.command()
 async def bot_help(ctx):
     """Show available commands"""
+    print(f"🔧 Help command triggered by {ctx.author}")
     embed = discord.Embed(
         title="🎧 Voice & Stream Tracker Help",
         description="Track voice channel time and streaming statistics",
@@ -45,6 +39,7 @@ async def bot_help(ctx):
 @commands.command()
 async def topstreamers(ctx):
     """Show top 5 streamers by total stream time"""
+    print(f"🔧 Topstreamers command triggered by {ctx.author}")
     top_streamers = ctx.bot.database.get_top_streamers(5)
     
     embed = discord.Embed(
@@ -76,6 +71,7 @@ async def topstreamers(ctx):
 @commands.command()
 async def topvoice(ctx):
     """Show top 5 voice channel users by time spent"""
+    print(f"🔧 Topvoice command triggered by {ctx.author}")
     top_voice_users = ctx.bot.database.get_top_voice_users(5)
     
     embed = discord.Embed(
@@ -107,6 +103,7 @@ async def topvoice(ctx):
 @commands.command()
 async def mystats(ctx):
     """Show user's personal statistics"""
+    print(f"🔧 Mystats command triggered by {ctx.author}")
     user_id = ctx.author.id
     
     # Get user's streaming stats
@@ -173,13 +170,38 @@ async def mystats(ctx):
 if __name__ == "__main__":
     bot = VoiceTrackerBot()
     
+    # Add debug events
+    @bot.event
+    async def on_ready():
+        print(f'✅ {bot.user} has connected to Discord!')
+        print(f'📊 Voice Tracker is monitoring {len(bot.guilds)} server(s)')
+        print('🤖 Bot is ready! Testing intents...')
+        print(f'Message Content Intent: {bot.intents.message_content}')
+        print(f'Guilds Intent: {bot.intents.guilds}')
+        print(f'Voice States Intent: {bot.intents.voice_states}')
+        print('💬 Use !vt bot_help for commands')
+    
+    @bot.event
+    async def on_message(message):
+        # Ignore bot's own messages
+        if message.author == bot.user:
+            return
+        
+        # Log all messages that start with the command prefix
+        if message.content.startswith('!vt '):
+            print(f"📨 Command received: '{message.content}' from {message.author} in #{message.channel}")
+        
+        # Process commands
+        await bot.process_commands(message)
+    
     # Add commands
-    bot.add_command(bot_help)  # Changed from 'help' to 'bot_help'
+    bot.add_command(bot_help)
     bot.add_command(topstreamers)
     bot.add_command(topvoice)
     bot.add_command(mystats)
     
     print("🚀 Starting Discord Voice & Stream Tracker...")
+    print("🔧 Debug mode enabled")
     
     try:
         bot.run(config.BOT_TOKEN)
