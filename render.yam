@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: discord-voice-tracker
+    env: python
+    plan: free
+    buildCommand: "./build.sh"
+    startCommand: "python main.py"
+    envVars:
+      - key: BOT_TOKEN
+        value: your_bot_token_here
