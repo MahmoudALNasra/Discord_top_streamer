@@ -37,5 +37,5 @@ A powerful Discord bot that automatically tracks and analyzes voice channel acti
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/discord-voice-tracker.git
+   git clone https://github.com/MahmoudALNasra/Discord_top_streamer.git
    cd discord-voice-tracker
