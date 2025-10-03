@@ -1,50 +1,41 @@
-# 🎧 Discord Voice & Stream Tracker
+# Discord Voice & Stream Tracker Bot
 
-A Discord bot that tracks voice channel time and streaming statistics, displaying top 5 users for each category.
+![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
+![Discord.py](https://img.shields.io/badge/discord.py-2.0%2B-green)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
-## 🤖 Features
+A powerful Discord bot that automatically tracks and analyzes voice channel activity and streaming statistics within your server.
 
-- **🎬 Stream Tracking**: Automatically tracks screen sharing/streaming time
-- **🎧 Voice Time Tracking**: Tracks time spent in voice channels
-- **🏆 Leaderboards**: Shows top 5 streamers and voice channel users
-- **📊 Personal Stats**: View your own streaming and voice time statistics
+## ✨ Features
 
-## 🚀 Commands
+### 🎬 Stream Analytics
+- Automatic detection of screen sharing/streaming sessions
+- Total stream time tracking per user
+- Stream session counting
+- Real-time leaderboard updates
 
-- `!vt bot_help` - Show all available commands
-- `!vt topstreamers` - Display top 5 streamers by total stream time
-- `!vt topvoice` - Display top 5 voice channel users by time spent
-- `!vt mystats` - Show your personal streaming and voice statistics
+### 🎧 Voice Channel Monitoring
+- Time spent in voice channels tracking
+- Session duration logging
+- Multi-session support
+- Accurate time calculation
 
-## 🛠️ Setup
+### 📊 Statistics & Leaderboards
+- **Top 5 Streamers**: Ranked by total streaming time
+- **Top 5 Voice Users**: Ranked by total voice channel time
+- **Personal Statistics**: Individual user insights
+- **Real-time Updates**: Live leaderboard changes
+
+## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.8+
+- Python 3.8 or higher
 - Discord Bot Token
+- Server with voice channels
 
 ### Installation
-1. Clone this repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Set environment variable: `BOT_TOKEN=your_bot_token_here`
-4. Run: `python main.py`
 
-### Hosting
-This bot is designed to run on cloud platforms like:
-- **Render** (recommended)
-- **Railway**
-- **Replit**
-- **Heroku**
-
-## 📊 How It Works
-
-- **Automatically tracks** when users join/leave voice channels
-- **Detects streaming** when users start/stop screen sharing
-- **Stores data** in SQLite database
-- **Updates leaderboards** in real-time
-
-## 🔧 Configuration
-
-Set the following environment variable:
-- `BOT_TOKEN`: Your Discord bot token
-
-## 📁 Project Structure
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/discord-voice-tracker.git
+   cd discord-voice-tracker
