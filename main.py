@@ -17,6 +17,10 @@ class VoiceTrackerBot(commands.Bot):
         
         self.database = VoiceTrackerDatabase(config.DATABASE_PATH)
         self.tracker = VoiceTimeTracker(self.database)
+    
+    async def on_voice_state_update(self, member, before, after):
+        """This MUST be here to forward events to tracker"""
+        await self.tracker.handle_voice_state_update(member, before, after)
 
 @commands.command()
 async def bot_help(ctx):
