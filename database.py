@@ -3,18 +3,15 @@ import os
 from datetime import datetime
 
 class VoiceTrackerDatabase:
-    def __init__(self):
-        # Try persistent storage first, fall back to memory
-        self.db_path = "/tmp/voice_tracker.db"
+    def __init__(self, db_path: str = "/tmp/voice_tracker.db"):
+        self.db_path = db_path
         self.memory_db = None
         self.init_database()
     
     def get_connection(self):
         try:
-            # Try persistent file first
             return sqlite3.connect(self.db_path)
         except:
-            # Fall back to in-memory database
             if self.memory_db is None:
                 self.memory_db = sqlite3.connect(':memory:')
                 self._init_memory_tables(self.memory_db)
@@ -51,7 +48,6 @@ class VoiceTrackerDatabase:
         conn.commit()
     
     def init_database(self):
-        """Initialize database - called on startup"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -116,7 +112,6 @@ class VoiceTrackerDatabase:
             start_time = datetime.fromisoformat(result[0])
             duration = (datetime.now() - start_time).total_seconds()
             
-            # Get current total
             cursor.execute('SELECT total_voice_time FROM voice_time WHERE user_id = ?', (user_id,))
             current_data = cursor.fetchone()
             current_total = current_data[0] if current_data else 0
@@ -136,6 +131,58 @@ class VoiceTrackerDatabase:
             conn.commit()
             conn.close()
             print(f"⏱️ Recorded {duration/60:.1f} minutes voice time")
+            return duration / 60
+        
+        conn.close()
+        return 0
+    
+    def start_stream_session(self, user_id, username, channel_id):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO active_sessions 
+            (user_id, session_type, start_time, channel_id)
+            VALUES (?, 'stream', datetime('now'), ?)
+        ''', (user_id, channel_id))
+        
+        conn.commit()
+        conn.close()
+        print(f"🎬 Stream session started for {username}")
+    
+    def end_stream_session(self, user_id):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT start_time FROM active_sessions 
+            WHERE user_id = ? AND session_type = 'stream'
+        ''', (user_id,))
+        
+        result = cursor.fetchone()
+        if result:
+            start_time = datetime.fromisoformat(result[0])
+            duration = (datetime.now() - start_time).total_seconds()
+            
+            cursor.execute('SELECT total_stream_time FROM streamers WHERE user_id = ?', (user_id,))
+            current_data = cursor.fetchone()
+            current_total = current_data[0] if current_data else 0
+            
+            cursor.execute('''
+                INSERT INTO streamers (user_id, username, total_stream_time, stream_sessions, last_streamed)
+                VALUES (?, ?, ?, 1, datetime('now'))
+                ON CONFLICT(user_id) 
+                DO UPDATE SET 
+                    total_stream_time = ?,
+                    stream_sessions = stream_sessions + 1,
+                    last_streamed = datetime('now')
+            ''', (user_id, f"User_{user_id}", current_total + duration, current_total + duration))
+            
+            cursor.execute('DELETE FROM active_sessions WHERE user_id = ?', (user_id,))
+            
+            conn.commit()
+            conn.close()
+            print(f"⏱️ Recorded {duration/60:.1f} minutes stream time")
             return duration / 60
         
         conn.close()
