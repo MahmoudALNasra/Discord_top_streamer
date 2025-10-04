@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 class VoiceTrackerDatabase:
-    def __init__(self, db_path: str = "/tmp/voice_tracker.db"):
+    def __init__(self, db_path: str = "voice_tracker.db"):
         self.db_path = db_path
         self.memory_db = None
         self.init_database()
