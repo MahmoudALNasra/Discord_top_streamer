@@ -1,4 +1,7 @@
-import sqlite3
+try:
+    import sqlite3
+except ImportError:
+    from pysqlite3 import dbapi2 as sqlite3
 import os
 from datetime import datetime
 
