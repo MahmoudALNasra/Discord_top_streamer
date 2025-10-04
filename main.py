@@ -1,247 +1,403 @@
-import discord
-from discord.ext import commands
+# database.py
+"""
+VoiceTrackerDatabase
+- Uses sqlite3 when available.
+- Falls back to a JSON-backed in-memory store if sqlite3 or system sqlite library is missing.
+This makes the bot resilient when running on hosts without libsqlite3.
+"""
+
+import os
 from datetime import datetime
-import config
-from tracker import VoiceTimeTracker
-from database import VoiceTrackerDatabase
+import time
+import threading
+import json
 
-class VoiceTrackerBot(commands.Bot):
-    def __init__(self):
-        intents = discord.Intents.default()
-        intents.voice_states = True
-        intents.messages = True
-        intents.guilds = True
-        intents.message_content = True
-        
-        super().__init__(command_prefix='!vt ', intents=intents)
-        
-        # Initialize components
-        self.database = VoiceTrackerDatabase()
-        self.tracker = VoiceTimeTracker(self.database)
-    
-    async def on_ready(self):
-        print(f'✅ {self.user} has connected to Discord!')
-        print(f'📊 Voice Tracker is monitoring {len(self.guilds)} server(s):')
-        for guild in self.guilds:
-            print(f'   - {guild.name} (ID: {guild.id})')
-        print('🤖 Use !vt bot_help for commands')
-    
-    async def on_voice_state_update(self, member, before, after):
-        await self.tracker.handle_voice_state_update(member, before, after)
+# Try to import sqlite3; if it fails (ImportError for libsqlite), fall back.
+try:
+    import sqlite3
+    SQLITE_AVAILABLE = True
+except Exception:
+    sqlite3 = None
+    SQLITE_AVAILABLE = False
 
-# Bot Commands
-@commands.command()
-async def bot_help(ctx):
-    """Show available commands"""
-    embed = discord.Embed(
-        title="🎧 Voice & Stream Tracker Help",
-        description="Track voice channel time and streaming statistics",
-        color=0x7289DA
-    )
-    embed.add_field(name="!vt topstreamers", value="Show top 5 streamers", inline=False)
-    embed.add_field(name="!vt topvoice", value="Show top 5 voice channel users", inline=False)
-    embed.add_field(name="!vt mystats", value="Show your personal statistics", inline=False)
-    embed.add_field(name="!vt debug", value="Debug database information", inline=False)
-    embed.add_field(name="!vt bot_help", value="Show this help message", inline=False)
-    
-    await ctx.send(embed=embed)
+class VoiceTrackerDatabase:
+    def __init__(self, db_path: str = "/tmp/voice_tracker.db"):
+        self.db_path = db_path
+        self.lock = threading.Lock()
 
-@commands.command()
-async def topstreamers(ctx):
-    """Show top 5 streamers by total stream time"""
-    top_streamers = ctx.bot.database.get_top_streamers(5)
-    
-    embed = discord.Embed(
-        title="🎬 Top 5 Streamers",
-        description="Most dedicated streamers by total stream time",
-        color=0x9146FF,
-        timestamp=datetime.now()
-    )
-    
-    if top_streamers:
-        for i, streamer in enumerate(top_streamers, 1):
-            hours = streamer['total_stream_time'] / 3600
-            sessions = streamer['sessions']
-            
-            # FIX: Always fetch current username from Discord
-            user = ctx.bot.get_user(streamer['user_id'])
-            if user:
-                username = user.display_name
-            else:
-                try:
-                    user = await ctx.bot.fetch_user(streamer['user_id'])
-                    username = user.display_name
-                except:
-                    username = "Unknown User"
-            
-            embed.add_field(
-                name=f"{i}. {username}",
-                value=f"⏱️ {hours:.1f} hours • {sessions} streams",
-                inline=False
+        if SQLITE_AVAILABLE:
+            self.memory_db = None
+            self._init_sqlite()
+        else:
+            # fallback json store file path
+            self.json_path = self.db_path + ".json"
+            self._init_json_store()
+            print("⚠️ sqlite3 not available — using JSON fallback store")
+
+    # ----------------------------
+    # SQLite implementation
+    # ----------------------------
+    def _init_sqlite(self):
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS streamers (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                total_stream_time REAL DEFAULT 0,
+                stream_sessions INTEGER DEFAULT 0,
+                last_streamed TEXT
             )
-    else:
-        embed.description = "No streaming data yet! Start streaming to see stats."
-    
-    await ctx.send(embed=embed)
+        ''')
 
-@commands.command()
-async def topvoice(ctx):
-    """Show top 5 voice channel users by time spent"""
-    top_voice_users = ctx.bot.database.get_top_voice_users(5)
-    
-    embed = discord.Embed(
-        title="🎧 Top 5 Voice Champions",
-        description="Most active users in voice channels",
-        color=0x00ff00,
-        timestamp=datetime.now()
-    )
-    
-    if top_voice_users:
-        for i, user_data in enumerate(top_voice_users, 1):
-            hours = user_data['total_voice_time'] / 3600
-            sessions = user_data['sessions']
-            
-            # FIX: Always fetch current username from Discord
-            user = ctx.bot.get_user(user_data['user_id'])
-            if user:
-                username = user.display_name
-            else:
-                try:
-                    user = await ctx.bot.fetch_user(user_data['user_id'])
-                    username = user.display_name
-                except:
-                    username = "Unknown User"
-            
-            embed.add_field(
-                name=f"{i}. {username}",
-                value=f"⏱️ {hours:.1f} hours • {sessions} sessions",
-                inline=False
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS voice_time (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                total_voice_time REAL DEFAULT 0,
+                voice_sessions INTEGER DEFAULT 0,
+                last_joined TEXT
             )
-    else:
-        embed.description = "No voice channel data yet! Join voice channels to see stats."
-    
-    await ctx.send(embed=embed)
+        ''')
 
-@commands.command()
-async def mystats(ctx):
-    """Show user's personal statistics"""
-    user_id = ctx.author.id
-    
-    # Get user's streaming stats
-    top_streamers = ctx.bot.database.get_top_streamers(100)
-    user_stream_rank = None
-    user_stream_stats = None
-    
-    for i, streamer in enumerate(top_streamers, 1):
-        if streamer['user_id'] == user_id:
-            user_stream_rank = i
-            user_stream_stats = streamer
-            break
-    
-    # Get user's voice stats
-    top_voice_users = ctx.bot.database.get_top_voice_users(100)
-    user_voice_rank = None
-    user_voice_stats = None
-    
-    for i, user_data in enumerate(top_voice_users, 1):
-        if user_data['user_id'] == user_id:
-            user_voice_rank = i
-            user_voice_stats = user_data
-            break
-    
-    embed = discord.Embed(
-        title=f"📊 {ctx.author.display_name}'s Statistics",
-        color=0x7289DA,
-        timestamp=datetime.now()
-    )
-    
-    # Streaming stats
-    if user_stream_stats:
-        stream_hours = user_stream_stats['total_stream_time'] / 3600
-        embed.add_field(
-            name="🎬 Streaming",
-            value=f"**{stream_hours:.1f} hours**\n#{user_stream_rank} • {user_stream_stats['sessions']} streams",
-            inline=True
-        )
-    else:
-        embed.add_field(
-            name="🎬 Streaming",
-            value="No streaming data",
-            inline=True
-        )
-    
-    # Voice stats
-    if user_voice_stats:
-        voice_hours = user_voice_stats['total_voice_time'] / 3600
-        embed.add_field(
-            name="🎧 Voice Time",
-            value=f"**{voice_hours:.1f} hours**\n#{user_voice_rank} • {user_voice_stats['sessions']} sessions",
-            inline=True
-        )
-    else:
-        embed.add_field(
-            name="🎧 Voice Time",
-            value="No voice data",
-            inline=True
-        )
-    
-    await ctx.send(embed=embed)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS active_sessions (
+                user_id INTEGER PRIMARY KEY,
+                session_type TEXT,
+                start_time TEXT,
+                channel_id INTEGER
+            )
+        ''')
 
-@commands.command()
-async def debug(ctx):
-    """Debug command to check database"""
-    user_id = ctx.author.id
-    
-    top_voice = ctx.bot.database.get_top_voice_users(10)
-    top_stream = ctx.bot.database.get_top_streamers(10)
-    
-    user_in_voice = any(user['user_id'] == user_id for user in top_voice)
-    user_in_stream = any(user['user_id'] == user_id for user in top_stream)
-    
-    debug_info = f"**Debug Info for {ctx.author.display_name}**\n"
-    debug_info += f"User ID: {user_id}\n"
-    debug_info += f"Voice Users in DB: {len(top_voice)}\n"
-    debug_info += f"Streamers in DB: {len(top_stream)}\n"
-    debug_info += f"You in Voice Data: {user_in_voice}\n"
-    debug_info += f"You in Stream Data: {user_in_stream}\n"
-    
-    await ctx.send(f"```{debug_info}```")
+        conn.commit()
+        conn.close()
+        print("✅ Database initialized (SQLite)")
 
-# Initialize and run bot
-if __name__ == "__main__":
-    bot = VoiceTrackerBot()
-    
-    @bot.event
-    async def on_ready():
-        print(f'✅ {bot.user} has connected to Discord!')
-        print(f'📊 Monitoring {len(bot.guilds)} server(s):')
-        for guild in bot.guilds:
-            print(f'   - {guild.name} (ID: {guild.id})')
-        print('🤖 Bot is ready! Use !vt bot_help for commands')
-    
-    @bot.event
-    async def on_message(message):
-        # FIX: Ignore bot's own messages to prevent duplicate responses
-        if message.author == bot.user:
-            return
-        
-        # Only process commands that start with our prefix
-        if message.content.startswith('!vt '):
-            print(f"📨 Command received: '{message.content}' from {message.author}")
-        
-        # Process commands (this should only happen once)
-        await bot.process_commands(message)
-    
-    # Add commands
-    bot.add_command(bot_help)
-    bot.add_command(topstreamers)
-    bot.add_command(topvoice)
-    bot.add_command(mystats)
-    bot.add_command(debug)
-    
-    print("🚀 Starting Discord Voice & Stream Tracker...")
-    
-    try:
-        bot.run(config.BOT_TOKEN)
-    except Exception as e:
-        print(f"❌ Error: {e}")
+    def get_connection(self):
+        # try file connection; if it fails, create memory fallback
+        try:
+            return sqlite3.connect(self.db_path, check_same_thread=False)
+        except Exception:
+            if getattr(self, "memory_db", None) is None:
+                self.memory_db = sqlite3.connect(':memory:', check_same_thread=False)
+                self._init_memory_tables(self.memory_db)
+            return self.memory_db
+
+    def _init_memory_tables(self, conn):
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS streamers (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                total_stream_time REAL DEFAULT 0,
+                stream_sessions INTEGER DEFAULT 0,
+                last_streamed TEXT
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS voice_time (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                total_voice_time REAL DEFAULT 0,
+                voice_sessions INTEGER DEFAULT 0,
+                last_joined TEXT
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS active_sessions (
+                user_id INTEGER PRIMARY KEY,
+                session_type TEXT,
+                start_time TEXT,
+                channel_id INTEGER
+            )
+        ''')
+        conn.commit()
+
+    # ----------------------------
+    # JSON fallback implementation
+    # ----------------------------
+    def _init_json_store(self):
+        # store structure: { "streamers": {id: {...}}, "voice_time": {id: {...}}, "active_sessions": {id: {...}} }
+        if not os.path.exists(self.json_path):
+            data = {
+                "streamers": {},
+                "voice_time": {},
+                "active_sessions": {}
+            }
+            self._write_json(data)
+        print("✅ JSON fallback store initialized")
+
+    def _read_json(self):
+        with self.lock:
+            with open(self.json_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+
+    def _write_json(self, data):
+        # ensure directory exists
+        os.makedirs(os.path.dirname(self.json_path), exist_ok=True)
+        with self.lock:
+            with open(self.json_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+    # ----------------------------
+    # Common helper: now iso
+    # ----------------------------
+    def _now_iso(self):
+        # use ISO-like string compatible with datetime.fromisoformat
+        return datetime.now().replace(microsecond=0).isoformat(sep=' ')
+
+    # ----------------------------
+    # Public API: start/end/queries
+    # ----------------------------
+    def start_voice_session(self, user_id, username, channel_id):
+        if SQLITE_AVAILABLE:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO active_sessions
+                (user_id, session_type, start_time, channel_id)
+                VALUES (?, 'voice', datetime('now'), ?)
+            ''', (user_id, channel_id))
+            conn.commit()
+            conn.close()
+        else:
+            data = self._read_json()
+            data["active_sessions"][str(user_id)] = {
+                "session_type": "voice",
+                "start_time": self._now_iso(),
+                "channel_id": channel_id
+            }
+            self._write_json(data)
+        print(f"🎧 Voice session started for {username}")
+
+    def end_voice_session(self, user_id):
+        if SQLITE_AVAILABLE:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT start_time FROM active_sessions
+                WHERE user_id = ? AND session_type = 'voice'
+            ''', (user_id,))
+            result = cursor.fetchone()
+
+            if result:
+                start_time_str = result[0]
+                try:
+                    start_time = datetime.fromisoformat(start_time_str)
+                except Exception:
+                    # If format mismatch, fallback to parsing common formats
+                    start_time = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
+
+                duration = (datetime.now() - start_time).total_seconds()
+
+                cursor.execute('SELECT total_voice_time FROM voice_time WHERE user_id = ?', (user_id,))
+                current_data = cursor.fetchone()
+                current_total = current_data[0] if current_data else 0
+
+                new_total = current_total + duration
+
+                cursor.execute('''
+                    INSERT INTO voice_time (user_id, username, total_voice_time, voice_sessions, last_joined)
+                    VALUES (?, ?, ?, 1, datetime('now'))
+                    ON CONFLICT(user_id)
+                    DO UPDATE SET
+                        total_voice_time = ?,
+                        voice_sessions = voice_sessions + 1,
+                        last_joined = datetime('now')
+                ''', (user_id, f"User_{user_id}", new_total, new_total))
+
+                cursor.execute('DELETE FROM active_sessions WHERE user_id = ?', (user_id,))
+
+                conn.commit()
+                conn.close()
+                print(f"⏱️ Recorded {duration/60:.1f} minutes voice time")
+                return duration / 60
+
+            conn.close()
+            return 0
+        else:
+            data = self._read_json()
+            sess = data["active_sessions"].get(str(user_id))
+            if not sess or sess.get("session_type") != "voice":
+                return 0
+            start_time = datetime.fromisoformat(sess["start_time"])
+            duration = (datetime.now() - start_time).total_seconds()
+
+            vt = data["voice_time"].get(str(user_id), {
+                "user_id": user_id,
+                "username": f"User_{user_id}",
+                "total_voice_time": 0,
+                "voice_sessions": 0,
+                "last_joined": None
+            })
+            vt["total_voice_time"] = vt.get("total_voice_time", 0) + duration
+            vt["voice_sessions"] = vt.get("voice_sessions", 0) + 1
+            vt["last_joined"] = self._now_iso()
+            data["voice_time"][str(user_id)] = vt
+
+            # remove active session
+            del data["active_sessions"][str(user_id)]
+            self._write_json(data)
+
+            print(f"⏱️ Recorded {duration/60:.1f} minutes voice time (JSON fallback)")
+            return duration / 60
+
+    def start_stream_session(self, user_id, username, channel_id):
+        if SQLITE_AVAILABLE:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO active_sessions
+                (user_id, session_type, start_time, channel_id)
+                VALUES (?, 'stream', datetime('now'), ?)
+            ''', (user_id, channel_id))
+            conn.commit()
+            conn.close()
+        else:
+            data = self._read_json()
+            data["active_sessions"][str(user_id)] = {
+                "session_type": "stream",
+                "start_time": self._now_iso(),
+                "channel_id": channel_id
+            }
+            self._write_json(data)
+        print(f"🎬 Stream session started for {username}")
+
+    def end_stream_session(self, user_id):
+        if SQLITE_AVAILABLE:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT start_time FROM active_sessions
+                WHERE user_id = ? AND session_type = 'stream'
+            ''', (user_id,))
+            result = cursor.fetchone()
+            if result:
+                start_time_str = result[0]
+                try:
+                    start_time = datetime.fromisoformat(start_time_str)
+                except Exception:
+                    start_time = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
+                duration = (datetime.now() - start_time).total_seconds()
+
+                cursor.execute('SELECT total_stream_time FROM streamers WHERE user_id = ?', (user_id,))
+                current_data = cursor.fetchone()
+                current_total = current_data[0] if current_data else 0
+                new_total = current_total + duration
+
+                cursor.execute('''
+                    INSERT INTO streamers (user_id, username, total_stream_time, stream_sessions, last_streamed)
+                    VALUES (?, ?, ?, 1, datetime('now'))
+                    ON CONFLICT(user_id)
+                    DO UPDATE SET
+                        total_stream_time = ?,
+                        stream_sessions = stream_sessions + 1,
+                        last_streamed = datetime('now')
+                ''', (user_id, f"User_{user_id}", new_total, new_total))
+
+                cursor.execute('DELETE FROM active_sessions WHERE user_id = ?', (user_id,))
+                conn.commit()
+                conn.close()
+                print(f"⏱️ Recorded {duration/60:.1f} minutes stream time")
+                return duration / 60
+
+            conn.close()
+            return 0
+        else:
+            data = self._read_json()
+            sess = data["active_sessions"].get(str(user_id))
+            if not sess or sess.get("session_type") != "stream":
+                return 0
+            start_time = datetime.fromisoformat(sess["start_time"])
+            duration = (datetime.now() - start_time).total_seconds()
+
+            st = data["streamers"].get(str(user_id), {
+                "user_id": user_id,
+                "username": f"User_{user_id}",
+                "total_stream_time": 0,
+                "stream_sessions": 0,
+                "last_streamed": None
+            })
+            st["total_stream_time"] = st.get("total_stream_time", 0) + duration
+            st["stream_sessions"] = st.get("stream_sessions", 0) + 1
+            st["last_streamed"] = self._now_iso()
+            data["streamers"][str(user_id)] = st
+
+            del data["active_sessions"][str(user_id)]
+            self._write_json(data)
+
+            print(f"⏱️ Recorded {duration/60:.1f} minutes stream time (JSON fallback)")
+            return duration / 60
+
+    def get_top_voice_users(self, limit=5):
+        if SQLITE_AVAILABLE:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT user_id, username, total_voice_time, voice_sessions
+                FROM voice_time
+                ORDER BY total_voice_time DESC
+                LIMIT ?
+            ''', (limit,))
+            results = cursor.fetchall()
+            conn.close()
+            return [{'user_id': row[0], 'username': row[1], 'total_voice_time': row[2], 'sessions': row[3]} for row in results]
+        else:
+            data = self._read_json()
+            items = []
+            for k, v in data["voice_time"].items():
+                items.append({
+                    "user_id": int(k),
+                    "username": v.get("username"),
+                    "total_voice_time": v.get("total_voice_time", 0),
+                    "sessions": v.get("voice_sessions", 0)
+                })
+            items.sort(key=lambda x: x["total_voice_time"], reverse=True)
+            return items[:limit]
+
+    def get_top_streamers(self, limit=5):
+        if SQLITE_AVAILABLE:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT user_id, username, total_stream_time, stream_sessions
+                FROM streamers
+                ORDER BY total_stream_time DESC
+                LIMIT ?
+            ''', (limit,))
+            results = cursor.fetchall()
+            conn.close()
+            return [{'user_id': row[0], 'username': row[1], 'total_stream_time': row[2], 'sessions': row[3]} for row in results]
+        else:
+            data = self._read_json()
+            items = []
+            for k, v in data["streamers"].items():
+                items.append({
+                    "user_id": int(k),
+                    "username": v.get("username"),
+                    "total_stream_time": v.get("total_stream_time", 0),
+                    "sessions": v.get("stream_sessions", 0)
+                })
+            items.sort(key=lambda x: x["total_stream_time"], reverse=True)
+            return items[:limit]
+
+    def get_user_watch_stats(self, user_id):
+        if SQLITE_AVAILABLE:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT total_voice_time, voice_sessions FROM voice_time WHERE user_id = ?', (user_id,))
+            result = cursor.fetchone()
+            conn.close()
+            if result:
+                return {'total_voice_time': result[0], 'sessions': result[1]}
+            return None
+        else:
+            data = self._read_json()
+            v = data["voice_time"].get(str(user_id))
+            if v:
+                return {'total_voice_time': v.get("total_voice_time", 0), 'sessions': v.get("voice_sessions", 0)}
+            return None
