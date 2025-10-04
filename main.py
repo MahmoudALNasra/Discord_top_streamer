@@ -221,11 +221,15 @@ if __name__ == "__main__":
     
     @bot.event
     async def on_message(message):
-        # Ignore bot's own messages
+        # FIX: Ignore bot's own messages to prevent duplicate responses
         if message.author == bot.user:
             return
         
-        # Process commands
+        # Only process commands that start with our prefix
+        if message.content.startswith('!vt '):
+            print(f"📨 Command received: '{message.content}' from {message.author}")
+        
+        # Process commands (this should only happen once)
         await bot.process_commands(message)
     
     # Add commands
