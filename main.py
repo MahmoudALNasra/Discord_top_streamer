@@ -15,13 +15,15 @@ class VoiceTrackerBot(commands.Bot):
         
         super().__init__(command_prefix='!vt ', intents=intents)
         
-        # Initialize components - REMOVED DATABASE_PATH
-        self.database = VoiceTrackerDatabase()  # ← CHANGED THIS LINE
+        # Initialize components
+        self.database = VoiceTrackerDatabase()
         self.tracker = VoiceTimeTracker(self.database)
     
     async def on_ready(self):
         print(f'✅ {self.user} has connected to Discord!')
-        print(f'📊 Voice Tracker is monitoring {len(self.guilds)} server(s)')
+        print(f'📊 Voice Tracker is monitoring {len(self.guilds)} server(s):')
+        for guild in self.guilds:
+            print(f'   - {guild.name} (ID: {guild.id})')
         print('🤖 Use !vt bot_help for commands')
     
     async def on_voice_state_update(self, member, before, after):
@@ -61,8 +63,16 @@ async def topstreamers(ctx):
             hours = streamer['total_stream_time'] / 3600
             sessions = streamer['sessions']
             
+            # FIX: Always fetch current username from Discord
             user = ctx.bot.get_user(streamer['user_id'])
-            username = user.display_name if user else streamer['username']
+            if user:
+                username = user.display_name
+            else:
+                try:
+                    user = await ctx.bot.fetch_user(streamer['user_id'])
+                    username = user.display_name
+                except:
+                    username = "Unknown User"
             
             embed.add_field(
                 name=f"{i}. {username}",
@@ -91,8 +101,16 @@ async def topvoice(ctx):
             hours = user_data['total_voice_time'] / 3600
             sessions = user_data['sessions']
             
+            # FIX: Always fetch current username from Discord
             user = ctx.bot.get_user(user_data['user_id'])
-            username = user.display_name if user else user_data['username']
+            if user:
+                username = user.display_name
+            else:
+                try:
+                    user = await ctx.bot.fetch_user(user_data['user_id'])
+                    username = user.display_name
+                except:
+                    username = "Unknown User"
             
             embed.add_field(
                 name=f"{i}. {username}",
@@ -109,6 +127,7 @@ async def mystats(ctx):
     """Show user's personal statistics"""
     user_id = ctx.author.id
     
+    # Get user's streaming stats
     top_streamers = ctx.bot.database.get_top_streamers(100)
     user_stream_rank = None
     user_stream_stats = None
@@ -119,6 +138,7 @@ async def mystats(ctx):
             user_stream_stats = streamer
             break
     
+    # Get user's voice stats
     top_voice_users = ctx.bot.database.get_top_voice_users(100)
     user_voice_rank = None
     user_voice_stats = None
@@ -135,6 +155,7 @@ async def mystats(ctx):
         timestamp=datetime.now()
     )
     
+    # Streaming stats
     if user_stream_stats:
         stream_hours = user_stream_stats['total_stream_time'] / 3600
         embed.add_field(
@@ -149,6 +170,7 @@ async def mystats(ctx):
             inline=True
         )
     
+    # Voice stats
     if user_voice_stats:
         voice_hours = user_voice_stats['total_voice_time'] / 3600
         embed.add_field(
@@ -192,7 +214,19 @@ if __name__ == "__main__":
     @bot.event
     async def on_ready():
         print(f'✅ {bot.user} has connected to Discord!')
-        print('🤖 Bot is ready!')
+        print(f'📊 Monitoring {len(bot.guilds)} server(s):')
+        for guild in bot.guilds:
+            print(f'   - {guild.name} (ID: {guild.id})')
+        print('🤖 Bot is ready! Use !vt bot_help for commands')
+    
+    @bot.event
+    async def on_message(message):
+        # Ignore bot's own messages
+        if message.author == bot.user:
+            return
+        
+        # Process commands
+        await bot.process_commands(message)
     
     # Add commands
     bot.add_command(bot_help)
